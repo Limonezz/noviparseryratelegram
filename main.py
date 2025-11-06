@@ -237,11 +237,13 @@ async def continuous_parsing(user_client, bot_client):
 
 # ===== ОСНОВНАЯ ФУНКЦИЯ =====
 async def main():
-    # User client для парсинга (использует сессию)
+    # User client для парсинга (использует сессию пользователя)
     user_client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
-    # Bot client только для отправки сообщений
-    bot_client = TelegramClient('bot_session', API_ID, API_HASH)
     
+    # Bot client только для отправки сообщений
+    bot_client = TelegramClient('bot', API_ID, API_HASH)
+    
+    # Обработчики команд для бота
     @bot_client.on(events.NewMessage(pattern='/start'))
     async def start_handler(event):
         user_id = event.chat_id
@@ -272,11 +274,14 @@ async def main():
         )
     
     try:
-        # Запускаем оба клиента
+        # Запускаем user client (без бот-токена!)
         await user_client.start()
-        await bot_client.start(bot_token=BOT_TOKEN)
+        logger.info("User client запущен для парсинга")
         
-        logger.info("Бот запущен!")
+        # Запускаем bot client с токеном
+        await bot_client.start(bot_token=BOT_TOKEN)
+        logger.info("Bot client запущен для отправки сообщений")
+        
         logger.info(f"Каналов для парсинга: {len(CHANNELS)}")
         
         # Запускаем парсеринг
