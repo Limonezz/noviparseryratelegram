@@ -152,7 +152,68 @@ def mark_message_as_sent(conn, message_hash, channel_name, message_text, message
     )
     conn.commit()
 
-# ===== ПАРСЕРИНГ =====
+# ===== ФУНКЦИИ ДЛЯ ПАРСЕРИНГА =====
+def format_channel_name(channel_name):
+    name_map = {
+        'gubernator_46': 'Оперштаб Курской области',
+        'kursk_info46': 'Твой Курский край',
+        'Alekhin_Telega': 'Роман Алехин',
+        'rian_ru': 'РИА Новости',
+        'kursk_ak46': 'Актуальный Курск',
+        'zhest_kursk_146': 'Жесть Курск',
+        'novosti_efir': 'Прямой Эфир',
+        'kursk_tipich': 'Типичный Курск',
+        'seymkursk': 'Сейм: новости Курской области',
+        'kursk_smi': 'Новости Курска и Области',
+        'kursk_russia': 'Курск №1',
+        'belgorod01': 'Белгород №1',
+        'kurskadm': 'Курская область',
+        'incident46': 'Инцидент Курск',
+        'kurskbomond': 'Курский Бомонд',
+        'prigranichie_radar1': 'Приграничный Радар',
+        'grohot_pgr': 'Грохот приграничья',
+        'kursk_nasv': 'Курск на связи',
+        'mchs_46': 'МЧС Курской области',
+        'patriot046': 'Патриот Курск',
+        'kursk_now': 'Курск сейчас',
+        'Hinshtein': 'Александр Хинштейн',
+        'incidentkursk': 'ЧП Курское приграничье',
+        'zhest_belgorod': 'Жесть Белгород',
+        'RVvoenkor': 'Военкоры Русской Весны',
+        'pb_032': 'Подслушано Брянск',
+        'tipicl32': 'Типичный Брянск',
+        'bryansk_smi': 'Новости Брянска и Области',
+        'Ria_novosti_rossiya': 'Россия сейчас',
+        'criminalru': 'Компромат Групп',
+        'bra_32': 'Новости Брянска',
+        'br_gorod': 'Город Брянск',
+        'br_zhest': 'Жесть Брянск',
+        'pravdas': 'ПС-Расследования',
+        'wargonzo': 'WarGonzo',
+        'ploschadmedia': 'Площадь',
+        'belgorod_smi': 'Новости Белгорода и Области',
+        'ssigny': 'Сигнал',
+        'rucriminalinfo': 'ВЧК-ОГПУ',
+        'kurskiy_harakter': 'Курский характер',
+        'dva_majors': 'Два майора',
+        'ENews112': '112',
+        'mash': 'Mash',
+        'NewsRussias7': 'Новости России'
+    }
+    return name_map.get(channel_name, channel_name)
+
+def format_message_text(text):
+    text = re.sub(r'\n\s*\n', '\n\n', text.strip())
+    if len(text) > 3800:
+        text = text[:3800] + "..."
+    return text
+
+def generate_message_url(channel_username, message_id):
+    return f"https://t.me/{channel_username}/{message_id}"
+
+def generate_channel_url(channel_username):
+    return f"https://t.me/{channel_username}"
+
 async def check_channel_for_new_messages(user_client, bot_client, db_conn, channel_name):
     try:
         messages = await user_client.get_messages(channel_name, limit=5)
@@ -164,24 +225,32 @@ async def check_channel_for_new_messages(user_client, bot_client, db_conn, chann
             message_text = message.text.strip()
             
             if is_spam_message(message_text):
+                logger.debug(f"Пропущен спам из {channel_name}")
                 continue
             
             if not is_recent_message(message.date):
+                logger.debug(f"Пропущено старое сообщение из {channel_name}")
                 continue
             
             message_hash = generate_message_hash(channel_name, message_text)
             if is_message_sent(db_conn, message_hash):
+                logger.debug(f"Сообщение уже отправлено из {channel_name}")
                 continue
             
             # Форматируем сообщение
-            message_url = f"https://t.me/{channel_name}/{message.id}"
+            formatted_text = format_message_text(message_text)
+            message_url = generate_message_url(channel_name, message.id)
+            channel_url = generate_channel_url(channel_name)
+            formatted_channel = format_channel_name(channel_name)
             message_time = message.date.astimezone(pytz.timezone('Europe/Moscow')).strftime('%H:%M %d.%m.%Y')
             
             formatted_post = (
-                f"📰 **{channel_name}**\n"
+                f"📰 **{formatted_channel}**\n"
                 f"🕒 {message_time}\n"
-                f"{message_text}\n"
-                f"🔗 [Источник]({message_url})"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"{formatted_text}\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"🔗 [Открыть сообщение]({message_url}) | 📢 [Перейти в канал]({channel_url})"
             )
             
             # Отправляем подписчикам
@@ -197,36 +266,39 @@ async def check_channel_for_new_messages(user_client, bot_client, db_conn, chann
                         link_preview=False
                     )
                     success_count += 1
-                    await asyncio.sleep(0.3)
+                    await asyncio.sleep(0.5)
                 except Exception as e:
                     logger.error(f"Ошибка отправки {user_id}: {e}")
             
             if success_count > 0:
                 mark_message_as_sent(db_conn, message_hash, channel_name, message_text, message.id)
-                logger.info(f"Отправлена новость из {channel_name}")
+                logger.info(f"✅ Отправлена новость из {channel_name} для {success_count} подписчиков")
             
             break  # Отправляем только одно сообщение за проверку
         
     except Exception as e:
-        logger.error(f"Ошибка проверки канала {channel_name}: {e}")
+        logger.error(f"❌ Ошибка проверки канала {channel_name}: {e}")
 
 async def continuous_parsing(user_client, bot_client):
     db_conn = init_db()
-    logger.info("Парсер запущен!")
+    logger.info("🔄 Парсер запущен!")
     
     while True:
         try:
+            logger.info("🔍 Начинаем проверку каналов...")
+            
             for channel in CHANNELS:
                 try:
                     await check_channel_for_new_messages(user_client, bot_client, db_conn, channel)
-                    await asyncio.sleep(3)
+                    await asyncio.sleep(2)  # Задержка между каналами
                 except Exception as e:
-                    logger.error(f"Ошибка при проверке {channel}: {e}")
+                    logger.error(f"❌ Ошибка при проверке {channel}: {e}")
             
+            logger.info("✅ Проверка завершена, ждем 30 секунд")
             await asyncio.sleep(30)
             
         except Exception as e:
-            logger.error(f"Ошибка в основном цикле: {e}")
+            logger.error(f"💥 Критическая ошибка в основном цикле: {e}")
             await asyncio.sleep(60)
 
 # ===== ОСНОВНАЯ ФУНКЦИЯ =====
@@ -243,46 +315,59 @@ async def main():
         user_id = event.chat_id
         add_subscriber(user_id)
         await event.reply(
-            "✅ Вы подписались на новостной парсер\n\n"
-            f"📊 Отслеживаем каналов: {len(CHANNELS)}\n"
-            "🔄 Проверка каждые 30 секунд\n\n"
-            "Команды:\n"
+            "🎉 **Добро пожаловать в парсер новостей!**\n\n"
+            "✅ Вы успешно подписались на рассылку\n"
+            "🔄 **РЕЖИМ РАБОТЫ:** непрерывный парсеринг\n"
+            "⏱ **ПРОВЕРКА:** каждые 30 секунд\n"
+            f"📰 **ОТСЛЕЖИВАЕМ:** {len(CHANNELS)} каналов\n\n"
+            "✨ Команды:\n"
             "/stats - статистика\n"
-            "/stop - отписаться"
+            "/stop - отписаться",
+            parse_mode='md',
+            link_preview=False
         )
     
     @bot_client.on(events.NewMessage(pattern='/stop'))
     async def stop_handler(event):
         user_id = event.chat_id
         remove_subscriber(user_id)
-        await event.reply("❌ Вы отписались от рассылки")
+        await event.reply(
+            "❌ **Вы отписались от рассылки**\n\n"
+            "Если передумаете - просто напишите /start",
+            parse_mode='md',
+            link_preview=False
+        )
     
     @bot_client.on(events.NewMessage(pattern='/stats'))
     async def stats_handler(event):
         subscribers = load_subscribers()
         await event.reply(
-            f"📊 Статистика:\n\n"
-            f"👥 Подписчиков: {len(subscribers)}\n"
-            f"📰 Каналов: {len(CHANNELS)}\n"
-            f"🔄 Режим: непрерывный парсинг"
+            f"📊 **СТАТИСТИКА СИСТЕМЫ**\n\n"
+            f"👥 *Подписчиков:* {len(subscribers)}\n"
+            f"📰 *Отслеживаемых каналов:* {len(CHANNELS)}\n"
+            f"🔄 *Режим работы:* непрерывный парсеринг\n"
+            f"⏱ *Частота проверки:* каждые 30 секунд",
+            parse_mode='md',
+            link_preview=False
         )
     
     try:
-        # Запускаем user client (без бот-токена!)
+        # Запускаем user client (должен работать без ввода пароля если сессия валидна)
         await user_client.start()
-        logger.info("User client запущен для парсинга")
+        logger.info("✅ User client запущен для парсинга")
         
         # Запускаем bot client с токеном
         await bot_client.start(bot_token=BOT_TOKEN)
-        logger.info("Bot client запущен для отправки сообщений")
+        logger.info("✅ Bot client запущен для отправки сообщений")
         
-        logger.info(f"Каналов для парсинга: {len(CHANNELS)}")
+        logger.info(f"📊 Каналов для парсинга: {len(CHANNELS)}")
+        logger.info("🚀 Запускаем непрерывный парсеринг...")
         
         # Запускаем парсеринг
         await continuous_parsing(user_client, bot_client)
             
     except Exception as e:
-        logger.error(f"Ошибка: {e}")
+        logger.error(f"💥 Критическая ошибка: {e}")
     finally:
         await user_client.disconnect()
         await bot_client.disconnect()
