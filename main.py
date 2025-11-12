@@ -152,6 +152,35 @@ def mark_message_as_sent(conn, message_hash, channel_name, message_text, message
     )
     conn.commit()
 
+# ===== ФОРМАТИРОВАНИЕ СООБЩЕНИЙ =====
+def format_message_for_sending(channel_name, message_text, message_id, message_date):
+    """Форматирует сообщение в красивый вид с кликабельными ссылками"""
+    
+    # Форматируем время
+    moscow_tz = pytz.timezone('Europe/Moscow')
+    message_time = message_date.astimezone(moscow_tz).strftime('%H:%M %d.%m.%Y')
+    
+    # Обрезаем текст если слишком длинный
+    if len(message_text) > 800:
+        message_text = message_text[:800] + "..."
+    
+    # Создаем ссылки
+    message_url = f"https://t.me/{channel_name}/{message_id}"
+    channel_url = f"https://t.me/{channel_name}"
+    
+    # Форматируем сообщение
+    formatted_message = (
+        f"🔸 **[{channel_name}]({channel_url})**\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"🕒 *{message_time}*\n"
+        f"{message_text}\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"📩 [Перейти к сообщению]({message_url})\n"
+        f"📢 [Перейти к каналу]({channel_url})"
+    )
+    
+    return formatted_message
+
 # ===== ПАРСЕРИНГ =====
 async def check_channel_for_new_messages(user_client, bot_client, db_conn, channel_name):
     try:
@@ -174,14 +203,11 @@ async def check_channel_for_new_messages(user_client, bot_client, db_conn, chann
                 continue
             
             # Форматируем сообщение
-            message_url = f"https://t.me/{channel_name}/{message.id}"
-            message_time = message.date.astimezone(pytz.timezone('Europe/Moscow')).strftime('%H:%M %d.%m.%Y')
-            
-            formatted_post = (
-                f"📰 **{channel_name}**\n"
-                f"🕒 {message_time}\n"
-                f"{message_text}\n"
-                f"🔗 [Источник]({message_url})"
+            formatted_post = format_message_for_sending(
+                channel_name, 
+                message_text, 
+                message.id, 
+                message.date
             )
             
             # Отправляем подписчикам
@@ -203,7 +229,7 @@ async def check_channel_for_new_messages(user_client, bot_client, db_conn, chann
             
             if success_count > 0:
                 mark_message_as_sent(db_conn, message_hash, channel_name, message_text, message.id)
-                logger.info(f"Отправлена новость из {channel_name} для {success_count} подписчиков")
+                logger.info(f"📤 Отправлена новость из {channel_name} для {success_count} подписчиков")
             
             break
         
@@ -212,7 +238,7 @@ async def check_channel_for_new_messages(user_client, bot_client, db_conn, chann
 
 async def continuous_parsing(user_client, bot_client):
     db_conn = init_db()
-    logger.info("Парсер запущен!")
+    logger.info("🔄 Парсер запущен!")
     
     while True:
         try:
@@ -223,69 +249,137 @@ async def continuous_parsing(user_client, bot_client):
                 except Exception as e:
                     logger.error(f"Ошибка при проверке {channel}: {e}")
             
-            logger.info("Цикл проверки завершен, ждем 30 секунд")
+            logger.info("✅ Цикл проверки завершен, ждем 30 секунд")
             await asyncio.sleep(30)
             
         except Exception as e:
-            logger.error(f"Ошибка в основном цикле: {e}")
+            logger.error(f"❌ Ошибка в основном цикле: {e}")
             await asyncio.sleep(60)
+
+# ===== КОМАНДЫ БОТА =====
+@events.register(events.NewMessage(pattern='/start'))
+async def start_handler(event):
+    user_id = event.chat_id
+    add_subscriber(user_id)
+    await event.reply(
+        "🎯 **Добро пожаловать в систему мониторинга новостей!**\n\n"
+        "✅ Вы подписались на получение важных новостей\n"
+        f"📊 Отслеживаем каналов: {len(CHANNELS)}\n"
+        "🔄 Проверка каждые 30 секунд\n\n"
+        "✨ **Команды:**\n"
+        "/stats - статистика\n"
+        "/stop - отписаться\n"
+        "/channels - список каналов"
+    )
+
+@events.register(events.NewMessage(pattern='/stop'))
+async def stop_handler(event):
+    user_id = event.chat_id
+    remove_subscriber(user_id)
+    await event.reply(
+        "❌ **Вы отписались от рассылки**\n\n"
+        "Чтобы снова подписаться, отправьте /start"
+    )
+
+@events.register(events.NewMessage(pattern='/stats'))
+async def stats_handler(event):
+    subscribers = load_subscribers()
+    await event.reply(
+        f"📊 **Статистика системы:**\n\n"
+        f"👥 Подписчиков: {len(subscribers)}\n"
+        f"📰 Отслеживаемых каналов: {len(CHANNELS)}\n"
+        f"🔄 Режим: непрерывный мониторинг\n"
+        f"⏱ Проверка: каждые 30 секунд"
+    )
+
+@events.register(events.NewMessage(pattern='/channels'))
+async def channels_handler(event):
+    channels_list = "\n".join([f"• {channel}" for channel in CHANNELS[:20]])
+    if len(CHANNELS) > 20:
+        channels_list += f"\n• ... и еще {len(CHANNELS) - 20} каналов"
+    
+    await event.reply(
+        f"📢 **Отслеживаемые каналы:**\n\n"
+        f"{channels_list}\n\n"
+        f"Всего: {len(CHANNELS)} источников"
+    )
+
+@events.register(events.NewMessage(pattern='/test'))
+async def test_handler(event):
+    """Тестовая команда для проверки форматирования"""
+    test_message = (
+        "Тестовое сообщение: В результате обстрела Белгорода повреждены несколько жилых домов. "
+        "По предварительной информации, пострадавших нет. Спецслужбы работают на месте."
+    )
+    
+    formatted_test = format_message_for_sending(
+        "test_channel",
+        test_message,
+        12345,
+        datetime.now(pytz.utc)
+    )
+    
+    await event.reply(
+        "🧪 **Тест форматирования:**\n\n" + formatted_test,
+        parse_mode='md',
+        link_preview=False
+    )
 
 # ===== ОСНОВНАЯ ФУНКЦИЯ =====
 async def main():
-    # User client для парсинга (использует сессию пользователя)
+    # User client для парсинга
     user_client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
     
     # Bot client только для отправки сообщений
     bot_client = TelegramClient('bot', API_ID, API_HASH)
     
-    @bot_client.on(events.NewMessage(pattern='/start'))
-    async def start_handler(event):
-        user_id = event.chat_id
-        add_subscriber(user_id)
-        await event.reply(
-            "✅ Вы подписались на новостной парсер\n\n"
-            f"📊 Отслеживаем каналов: {len(CHANNELS)}\n"
-            "🔄 Проверка каждые 30 секунд\n\n"
-            "Команды:\n"
-            "/stats - статистика\n"
-            "/stop - отписаться"
-        )
-    
-    @bot_client.on(events.NewMessage(pattern='/stop'))
-    async def stop_handler(event):
-        user_id = event.chat_id
-        remove_subscriber(user_id)
-        await event.reply("❌ Вы отписались от рассылки")
-    
-    @bot_client.on(events.NewMessage(pattern='/stats'))
-    async def stats_handler(event):
-        subscribers = load_subscribers()
-        await event.reply(
-            f"📊 Статистика:\n\n"
-            f"👥 Подписчиков: {len(subscribers)}\n"
-            f"📰 Каналов: {len(CHANNELS)}\n"
-            f"🔄 Режим: непрерывный парсинг"
-        )
+    # Регистрируем обработчики команд
+    bot_client.add_event_handler(start_handler)
+    bot_client.add_event_handler(stop_handler)
+    bot_client.add_event_handler(stats_handler)
+    bot_client.add_event_handler(channels_handler)
+    bot_client.add_event_handler(test_handler)
     
     try:
-        # Запускаем user client - ОЧЕНЬ ВАЖНО: без вызова input()!
+        # Запускаем user client
         await user_client.start()
-        logger.info("User client запущен для парсинга")
+        logger.info("✅ User client запущен для парсинга")
         
         # Запускаем bot client с токеном
         await bot_client.start(bot_token=BOT_TOKEN)
-        logger.info("Bot client запущен для отправки сообщений")
+        logger.info("✅ Bot client запущен для отправки сообщений")
         
-        logger.info(f"Каналов для парсинга: {len(CHANNELS)}")
+        logger.info(f"📡 Каналов для мониторинга: {len(CHANNELS)}")
+        
+        # Отправляем уведомление о запуске
+        subscribers = load_subscribers()
+        if subscribers:
+            for user_id in subscribers:
+                try:
+                    await bot_client.send_message(
+                        user_id,
+                        "🟢 **Система мониторинга запущена!**\n\n"
+                        "✅ Бот активен и начал отслеживание новостей\n"
+                        f"📊 Мониторим {len(CHANNELS)} каналов\n"
+                        "⚡ Ожидайте важные новости",
+                        parse_mode='md'
+                    )
+                except Exception as e:
+                    logger.error(f"❌ Не удалось уведомить {user_id}: {e}")
         
         # Запускаем парсеринг
         await continuous_parsing(user_client, bot_client)
             
     except Exception as e:
-        logger.error(f"Ошибка: {e}")
+        logger.error(f"💥 Критическая ошибка: {e}")
     finally:
         await user_client.disconnect()
         await bot_client.disconnect()
 
 if __name__ == '__main__':
+    # Создаем файлы если их нет
+    if not os.path.exists(SUBSCRIBERS_FILE):
+        with open(SUBSCRIBERS_FILE, 'w') as f:
+            pass
+    
     asyncio.run(main())
