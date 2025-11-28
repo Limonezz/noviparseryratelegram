@@ -15,6 +15,9 @@ API_HASH = '048e59c243cce6ff788a7da214bf8119'
 SESSION_STRING = "1ApWapzMBuyYVL4A-V5WkBkaQm1u79hOAUMNuUgzJQ47-Rr9cv-ahgjpYKLeO5_XIKcar2tfqamYFk7QFUE0PhAkNH0l36kLkUKLxcVbTHKLF9eRg02bnbWFrYsWJWEV1VNsYDhTJ8-ruHVKX58LqzZ3YuufJZ0CK81HlRrGuFgT3sWLLf31TVwUa-L1wIqRRfbwPW3MSK_CmhCUWB7EjMEEb2aAnJa4Ek0-cz_JOwaQwxVvWD22BUHO9RQSSuYFTv2IkO6gEpr6M7mm6_TymMhmIrkg5qGo-Fh05a2wO5d0xavPGdzg_4cjemdXWjvepFL0P3o_5SO8MvGAjnVYdTGVKekXwsRA="
 BOT_TOKEN = '8306634056:AAEXAd3P6TnH7OgpVoYCoI1FezacXtJuei8'
 
+# ID чата для отправки сообщений
+GROUP_CHAT_ID = 1003474109106
+
 CHANNELS = [
     'gubernator_46', 'kursk_info46', 'Alekhin_Telega', 'rian_ru',
     'kursk_ak46', 'zhest_kursk_146', 'novosti_efir', 'kursk_tipich',
@@ -74,7 +77,7 @@ IMPORTANT_KEYWORDS = [
     'строительство', 'реконструкция', 'благоустройство', 'инфраструктура', 'транспорт', 
     'дороги', 'энергетика', 'капремонт', 'объект', 'сооружение', 'подрядчик', 'заказчик',
     'смета', 'стоимость', 'сроки строительства', 'нарушение сроков', 'приемка объектов',
-    'социальные объекты', 'больницы', 'школы', 'очистные сооружения', 'мемориальный комплекс',
+    'социальные объекты', 'больницы', 'школы', 'очистные сооружения', 'мемorialный комплекс',
     'жилье', 'квартиры',
 
     # Происшествия и ЧП
@@ -269,26 +272,18 @@ async def check_channel_for_new_messages(user_client, bot_client, db_conn, chann
                 message.date
             )
             
-            # Отправляем подписчикам
-            subscribers = load_subscribers()
-            success_count = 0
-            
-            for user_id in subscribers:
-                try:
-                    await bot_client.send_message(
-                        user_id, 
-                        formatted_post, 
-                        parse_mode='md',
-                        link_preview=False
-                    )
-                    success_count += 1
-                    await asyncio.sleep(0.3)
-                except Exception as e:
-                    logger.error(f"Ошибка отправки {user_id}: {e}")
-            
-            if success_count > 0:
+            # Отправляем в группу вместо подписчиков
+            try:
+                await bot_client.send_message(
+                    GROUP_CHAT_ID,  # ОТПРАВЛЯЕМ В ЧАТ
+                    formatted_post, 
+                    parse_mode='md',
+                    link_preview=False
+                )
                 mark_message_as_sent(db_conn, message_hash, channel_name, message_text, message.id)
-                logger.info(f"📤 Отправлена новость из {channel_name} для {success_count} подписчиков")
+                logger.info(f"📤 Отправлена новость из {channel_name} в группу {GROUP_CHAT_ID}")
+            except Exception as e:
+                logger.error(f"Ошибка отправки в группу: {e}")
             
             break
         
@@ -299,6 +294,7 @@ async def continuous_parsing(user_client, bot_client):
     db_conn = init_db()
     logger.info("🔄 Парсер запущен!")
     logger.info(f"🎯 Отслеживаем {len(IMPORTANT_KEYWORDS)} ключевых слов")
+    logger.info(f"💬 Отправляем в группу: {GROUP_CHAT_ID}")
     
     while True:
         try:
@@ -326,6 +322,7 @@ async def start_handler(event):
         "✅ Вы подписались на получение важных новостей\n"
         f"📊 Отслеживаем каналов: {len(CHANNELS)}\n"
         f"🎯 Ключевых слов: {len(IMPORTANT_KEYWORDS)}\n"
+        f"💬 Отправляем в группу: {GROUP_CHAT_ID}\n"
         "🔄 Проверка каждые 30 секунд\n\n"
         "✨ **Команды:**\n"
         "/stats - статистика\n"
@@ -351,6 +348,7 @@ async def stats_handler(event):
         f"👥 Подписчиков: {len(subscribers)}\n"
         f"📰 Отслеживаемых каналов: {len(CHANNELS)}\n"
         f"🎯 Ключевых слов: {len(IMPORTANT_KEYWORDS)}\n"
+        f"💬 Группа назначения: {GROUP_CHAT_ID}\n"
         f"🔄 Режим: непрерывный мониторинг\n"
         f"⏱ Проверка: каждые 30 секунд"
     )
@@ -438,23 +436,7 @@ async def main():
         
         logger.info(f"📡 Каналов для мониторинга: {len(CHANNELS)}")
         logger.info(f"🎯 Ключевых слов для фильтрации: {len(IMPORTANT_KEYWORDS)}")
-        
-        # Отправляем уведомление о запуске
-        subscribers = load_subscribers()
-        if subscribers:
-            for user_id in subscribers:
-                try:
-                    await bot_client.send_message(
-                        user_id,
-                        "🟢 **Система мониторинга запущена!**\n\n"
-                        "✅ Бот активен и начал отслеживание новостей\n"
-                        f"📊 Мониторим {len(CHANNELS)} каналов\n"
-                        f"🎯 Фильтруем по {len(IMPORTANT_KEYWORDS)} ключевым словам\n"
-                        "⚡ Ожидайте важные новости",
-                        parse_mode='md'
-                    )
-                except Exception as e:
-                    logger.error(f"❌ Не удалось уведомить {user_id}: {e}")
+        logger.info(f"💬 Отправляем в группу: {GROUP_CHAT_ID}")
         
         # Запускаем парсеринг
         await continuous_parsing(user_client, bot_client)
